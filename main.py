@@ -20,6 +20,15 @@ for key in ["logged_in", "username", "role", "otp", "verified_user", "email_veri
 
 # HELPERS
 
+if "verified_user" not in st.session_state:
+    st.session_state.verified_user = None
+
+if "fp_otp_sent" not in st.session_state:
+    st.session_state.fp_otp_sent = False
+
+if "fp_otp" not in st.session_state:
+    st.session_state.fp_otp = None
+    
 def authenticate(username, password):
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
