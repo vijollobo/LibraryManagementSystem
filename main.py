@@ -28,139 +28,12 @@ if "fp_otp_sent" not in st.session_state:
 
 if "fp_otp" not in st.session_state:
     st.session_state.fp_otp = None
-    
-def authenticate(username, password):
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT password_hash, role FROM users WHERE username=%s", (username,))
-    row = cur.fetchone()
-    conn.close()
-    if not row:
-        return None
-    if row["password_hash"] == hash_password(password):
-        return row["role"]
-    return None
+  
 
-def accept_phone():
-    phone = st.text_input("Phone Number", max_chars=10)
-    if phone:
-        if re.match(r'^[6-9]\d{9}$', phone):
-            if table_parameter_exists("users","phone", phone):
-                st.error("Phone number already registered")
-                return None
-            return phone
-        st.error("Invalid phone number (must start with 6–9 and be 10 digits)")
-    return None
-
-
-def email_verificationOTP(name: str, email: str) -> bool:
-    """
-    Sends OTP to the given email and verifies it.
-    Returns True if verified, else False.
-    """
-
-    #  SESSION INIT 
-    for key, default in {
-        "email_otp": None,
-        "email_otp_sent": False,
-        "email_verified": False
-    }.items():
-        if key not in st.session_state:
-            st.session_state[key] = default
-
-    # SEND OTP 
-    if not st.session_state.email_verified:
-
-        if not st.session_state.email_otp_sent:
-            if st.button("Send OTP to email"):
-                st.session_state.email_otp = str(rand.randint(100000, 999999))
-                st.session_state.email_otp_sent = True
-
-                send_email(
-                    email,
-                    "Email Verification OTP",
-                    f"""
-Dear {name},
-
-Your One-Time Password (OTP) for email verification is:
-
-    {st.session_state.email_otp}
-
-Please enter this OTP in the application.
-Do not share this OTP with anyone.
-
-Warm regards,
-Librarian
-Central Library
-{date2string(Today)}
-"""
-                )
-                st.success(f"OTP sent to {email}")
-
-        # OTP INPUT (STATE-DRIVEN) 
-        if st.session_state.email_otp_sent:
-
-            st.markdown("### Enter 6-digit OTP")
-
-            otp_input = st.text_input(
-                "OTP",
-                max_chars=6,
-                placeholder="XXXXXX",
-                help="Enter the 6-digit numeric OTP sent to your email"
-            )
-
-            if otp_input:
-                if not otp_input.isdigit():
-                    st.error("OTP must contain digits only")
-                elif len(otp_input) != 6:
-                    st.error("OTP must be exactly 6 digits")
-                elif otp_input == st.session_state.email_otp:
-                    st.session_state.email_verified = True
-                    st.success("Email verified successfully")
-                else:
-                    st.error("Incorrect OTP")
-
-    return st.session_state.email_verified
-
-def accept_email(name: str):
-    email = st.text_input("E-mail address").strip().lower()
-
-    # 1. Empty input → do nothing
-    if not email:
-        return None
-
-    # 2. Format validation
-    if not validate_email(email):
-        st.error("Invalid email format")
-        return None
-
-    # 3. Uniqueness check
-    if table_parameter_exists("users", "email", email):
-        st.error("Email already registered")
-        return None
-
-    st.success("Valid email address, verification required")
-
-    # 4. Trigger OTP workflow ONLY for valid + unique email
-    verified = email_verificationOTP(name, email)
-
-    # 5. Return only after verification
-    if verified:
-        return email
-
-    return None
-
-
-    
-
-# --------------------------------------------------
 # MAIN MENU
-# --------------------------------------------------
-choice = st.radio("Choose Action", ["Sign In", "Sign Up", "Forgot Password", "Change Password"])
+choice = st.radio("Choose Action", ["Sign In", "Sign Up", "Forgot Password"])
 
-# ==================================================
 # SIGN IN
-# ==================================================
 if choice == "Sign In":
 
     username = st.text_input("Username")
@@ -174,6 +47,7 @@ if choice == "Sign In":
             if not role:
                 st.error("Invalid username or password")
             else:
+                st.session_state.clear()
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.role = role
@@ -183,9 +57,7 @@ if choice == "Sign In":
                 else:
                     st.switch_page("pages/users.py")
 
-# ==================================================
-# SIGN UP (USER ONLY)
-# ==================================================
+# SIGN UP (USER ONLY
 elif choice == "Sign Up":
 
     st.subheader("Create New User Account")
@@ -214,7 +86,10 @@ elif choice == "Sign Up":
         max_value=Today - relativedelta(years=12)
     )
     password = st.text_input("Password", type="password")
-
+    error = validate_password_strength(password)
+    if error:
+        st.error(error)
+        st.stop()
     questions = (
         "My favourite teacher",
         "My best friend's name",
@@ -469,65 +344,4 @@ Central Library
                         st.session_state.fp_otp = None
                         st.session_state.fp_otp_sent = False
 
-
-# CHANGE PASSWORD (NO OTP)
-elif choice == "Change Password":
-
-    username = st.text_input("Username")
-    old_pwd = st.text_input("Current Password", type="password")
-
-    role = authenticate(username, old_pwd)
-
-    if role:
-        conn = get_connection()
-        cur = conn.cursor(dictionary=True)
-        cur.execute(
-            "SELECT security_q, security_ans, name, email FROM users WHERE username=%s",
-            (username,)
-        )
-        row = cur.fetchone()
-        conn.close()
-
-        q_reverse = {1:"My favourite teacher",2:"My best friend's name",3:"My favourite food",4:"My favourite artist",5:"My nickname"}
-        st.write("Security Question:", q_reverse[row["security_q"]])
-        ans = st.text_input("Answer")
-
-        if ans == row["security_ans"]:
-            new_pwd = st.text_input("New Password", type="password")
-            if st.button("Change Password"):
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute(
-                    "UPDATE users SET password_hash=%s WHERE username=%s",
-                    (hash_password(new_pwd), username)
-                )
-                conn.commit()
-                conn.close()
-
-                send_email(
-    row["email"],
-    "Library Account Password Changed",
-    f"""
-Dear {row["name"]},
-
-This is to inform you that the password for your Library account
-has been changed successfully.
-
-Account Details:
-----------------
-Username      : {username}
-Old Password  : {old_pwd}
-New Password  : {new_pwd}
-
-If you did NOT request or authorize this change, please contact the Librarian or
-Library Administration immediately for assistance.
-
-Regards,
-Librarian
-Central Library
-{date2string(Today)}
-
-This is an auto-generated email. Please do not reply. Unintended inconvenience caused is deeply regretted.
-"""
-)
 
