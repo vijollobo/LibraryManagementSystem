@@ -48,6 +48,7 @@ def generate_code(length=5, cur=None, table=None, column=None):
             return code
 
 
+
 def send_email(email_receiver, subject, body, isHTML=False):
     email_sender = os.getenv("EMAIL_ID")
     email_password = os.getenv("EMAIL_PASS")
@@ -84,6 +85,142 @@ def table_parameter_exists(table,parameter, value):
     res = cur.fetchone()
     conn.close()
     return res is not None
+
+  
+def authenticate(username, password):
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT password_hash, role FROM users WHERE username=%s", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    if row["password_hash"] == hash_password(password):
+        return row["role"]
+    return None
+
+def accept_phone():
+    phone = st.text_input("Phone Number", max_chars=10)
+    if phone:
+        if re.match(r'^[6-9]\d{9}$', phone):
+            if table_parameter_exists("users","phone", phone):
+                st.error("Phone number already registered")
+                return None
+            return phone
+        st.error("Invalid phone number (must start with 6–9 and be 10 digits)")
+    return None
+
+
+def email_verificationOTP(name: str, email: str) -> bool:
+    """
+    Sends OTP to the given email and verifies it.
+    Returns True if verified, else False.
+    """
+
+    #  SESSION INIT 
+    for key, default in {
+        "email_otp": None,
+        "email_otp_sent": False,
+        "email_verified": False
+    }.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+    # SEND OTP 
+    if not st.session_state.email_verified:
+
+        if not st.session_state.email_otp_sent:
+            if st.button("Send OTP to email"):
+                st.session_state.email_otp = str(rand.randint(100000, 999999))
+                st.session_state.email_otp_sent = True
+
+                send_email(
+                    email,
+                    "Email Verification OTP",
+                    f"""
+Dear {name},
+
+Your One-Time Password (OTP) for email verification is:
+
+    {st.session_state.email_otp}
+
+Please enter this OTP in the application.
+Do not share this OTP with anyone.
+
+Warm regards,
+Librarian
+Central Library
+{date2string(date.today())}
+"""
+                )
+                st.success(f"OTP sent to {email}")
+
+        # OTP INPUT (STATE-DRIVEN) 
+        if st.session_state.email_otp_sent:
+
+            st.markdown("### Enter 6-digit OTP")
+
+            otp_input = st.text_input(
+                "OTP",
+                max_chars=6,
+                placeholder="XXXXXX",
+                help="Enter the 6-digit numeric OTP sent to your email"
+            )
+
+            if otp_input:
+                if not otp_input.isdigit():
+                    st.error("OTP must contain digits only")
+                elif len(otp_input) != 6:
+                    st.error("OTP must be exactly 6 digits")
+                elif otp_input == st.session_state.email_otp:
+                    st.session_state.email_verified = True
+                    st.success("Email verified successfully")
+                else:
+                    st.error("Incorrect OTP")
+
+    return st.session_state.email_verified
+
+def accept_email(name: str, email=None):
+    if email is not None:
+        email = st.text_input("E-mail address", value=email).strip().lower()
+
+    # 1. Empty input → do nothing
+    if not email:
+        return None
+
+    # 2. Format validation
+    if not validate_email(email):
+        st.error("Invalid email format")
+        return None
+
+    # 3. Uniqueness check
+    if table_parameter_exists("users", "email", email):
+        st.error("Email already registered")
+        return None
+
+    st.success("Valid email address, verification required")
+
+    # 4. Trigger OTP workflow ONLY for valid + unique email
+    verified = email_verificationOTP(name, email)
+
+    # 5. Return only after verification
+    if verified:
+        return email
+
+    return None
+
+def validate_password_strength(password):
+    if len(password) < 8:
+        return "Password must be at least 8 characters long"
+    if not re.search(r"[A-Z]", password):
+        return "Must include at least one uppercase letter"
+    if not re.search(r"[a-z]", password):
+        return "Must include at least one lowercase letter"
+    if not re.search(r"[0-9]", password):
+        return "Must include at least one number"
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        return "Must include at least one special character"
+    return None
 
 def calculate_cost(
     book_cost: float,
