@@ -23,6 +23,11 @@ st.set_page_config(page_title="Admin Dashboard", layout="wide")
 
 st.title("Librarian Admin Dashboard")
 
+# SIDEBAR 
+menu = st.sidebar.radio(
+    "Admin Operations",
+    ['Dashboard',"Add Book", "Edit Book Details", "Delete Book", "View Books", 'Issue Book','Return Book','Issue Requested Book',"Issued Books Report",'Get Details of a particular book','View all Requested Books','Filter Book', "View All Users",'Delete User',"Broadcast Email to users","Logout"]
+)
 
 
 def issueBook(user=None, book=None):
@@ -299,11 +304,6 @@ def issueBook(user=None, book=None):
     return None
 
 
-# SIDEBAR 
-menu = st.sidebar.radio(
-    "Admin Operations",
-    ["Add Book", "Edit Book Details", "Delete Book", "View Books", 'Issue Book','Return Book','Issue Requested Book',"Issued Books Report",'Get Details of a particular book','View all Requested Books','Filter Book', "View All Users",'Delete User',"Logout"]
-)
 
 
 # ADD BOOK 
@@ -959,6 +959,264 @@ This is an auto-generated email. Inconvenience caused is deeply regretted.
 elif menu == "Filter Book":
     filterBooks()
 
+# DASHBOARD 
+elif menu == "Dashboard":
+
+    st.subheader("Library Analytics Overview")
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+
+    # ---------- METRICS ----------
+    cur.execute("SELECT COUNT(*) as total_books FROM books")
+    total_books = cur.fetchone()["total_books"]
+
+    cur.execute("SELECT SUM(quantity) as total_copies FROM books")
+    total_copies = cur.fetchone()["total_copies"] or 0
+
+    cur.execute("SELECT COUNT(*) as total_users FROM users WHERE role='user'")
+    total_users = cur.fetchone()["total_users"]
+
+    cur.execute("SELECT COUNT(*) as active_issues FROM issued_books WHERE status='ISSUED'")
+    active_issues = cur.fetchone()["active_issues"]
+
+    cur.execute("""
+        SELECT COUNT(*) as overdue
+        FROM issued_books
+        WHERE status='ISSUED' AND dueDate < %s
+    """, (Today,))
+    overdue_books = cur.fetchone()["overdue"]
+
+    # ---------- METRIC CARDS ----------
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    col1.metric("Total Titles", total_books)
+    col2.metric("Total Copies", int(total_copies))
+    col3.metric("Registered Users", total_users)
+    col4.metric("Currently Issued", active_issues)
+    col5.metric("Overdue Books", overdue_books)
+
+    st.markdown("---")
+
+    # ---------- LOW STOCK ALERT ----------
+    cur.execute("""
+        SELECT ISBN, Name, Quantity 
+        FROM books
+        WHERE quantity <= 5
+        ORDER BY quantity
+    """)
+    low_stock = cur.fetchall()
+
+    st.markdown("### Low Stock Books")
+    if low_stock:
+        st.dataframe(low_stock, use_container_width=True, hide_index=True)
+    else:
+        st.success("All books sufficiently stocked.")
+
+    st.markdown("---")
+
+    # ---------- ISSUE TREND (Last 7 Days) ----------
+    cur.execute("""
+        SELECT issueDate, COUNT(*) as count
+        FROM issued_books
+        WHERE issueDate >= %s
+        GROUP BY issueDate
+        ORDER BY issueDate
+    """, (Today - timedelta(days=7),))
+
+    issue_data = cur.fetchall()
+
+    if issue_data:
+        import pandas as pd
+        df = pd.DataFrame(issue_data)
+        df["issueDate"] = pd.to_datetime(df["issueDate"])
+
+        st.markdown("### Issues in Last 7 Days")
+        st.line_chart(df.set_index("issueDate"))
+    else:
+        st.info("No book issues in the last 7 days.")
+
+    st.markdown("---")
+
+    # ---------- TOP BORROWED BOOKS ----------
+    cur.execute("""
+        SELECT b.ISBN, b.Name, COUNT(*) as `Times Issued`
+        FROM issued_books ib
+        JOIN books b ON ib.ISBN = b.ISBN
+        GROUP BY ib.ISBN
+        ORDER BY `Times Issued` DESC
+        LIMIT 5
+    """)
+    top_books = cur.fetchall()
+
+    st.markdown("### Most Borrowed Books")
+    if top_books:
+        st.dataframe(top_books, use_container_width=True, hide_index=True)
+    else:
+        st.info("No borrowing history yet.")
+
+    conn.close()
+
+elif menu=="Broadcast Email to users":
+    st.subheader("Broadcast Email System")
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+
+    # Fetch users
+    cur.execute("SELECT username, name, email FROM users WHERE role='user' ORDER BY name")
+    users = cur.fetchall()
+    conn.close()
+
+    if not users:
+        st.warning("No users found.")
+        st.stop()
+
+    user_map = {f"{u['name']} ({u['username']})": u for u in users}
+
+    # ---------------- TARGET SELECTION ----------------
+    st.markdown("### Select Recipients")
+
+    send_to_all = st.checkbox("Send to All Users")
+
+    selected_users = []
+
+    if send_to_all:
+        selected_users = users
+
+        exclude = st.multiselect(
+            "Deselect Specific Users",
+            list(user_map.keys())
+        )
+
+        selected_users = [
+            u for u in users
+            if f"{u['name']} ({u['username']})" not in exclude
+        ]
+
+    else:
+        selected = st.multiselect(
+            "Select Users",
+            list(user_map.keys())
+        )
+        selected_users = [user_map[s] for s in selected]
+
+    st.info(f"Total Recipients: {len(selected_users)}")
+
+    if not selected_users:
+        st.stop()
+
+    # ---------------- EMAIL FORMAT ----------------
+    st.markdown("### Compose Message")
+
+    subject = st.text_input("Email Subject")
+
+    use_html = st.toggle("Send as HTML Email")
+
+    default_template = f"""Dear {{name}},
+
+We hope this message finds you well.
+
+[Write your announcement here]
+
+Warm regards,
+Librarian
+Central Library
+{date2string(date.today())}
+"""
+
+    if not use_html:
+        body = st.text_area(
+            "Draft Email (Plain Text)",
+            value=default_template,
+            height=300
+        )
+    else:
+        html_template = f"""
+<html>
+<body style="font-family:Georgia,serif; line-height:1.6;">
+<p>Dear {{name}},</p>
+
+<p>We hope this message finds you well.</p>
+
+<p>[Write your announcement here]</p>
+
+<br>
+<p>
+Warm regards,<br>
+<b>Librarian</b><br>
+Central Library<br>
+{date2string(date.today())}
+</p>
+</body>
+</html>
+"""
+        body = st.text_area(
+            "Draft Email (HTML Mode)",
+            value=html_template,
+            height=400
+        )
+
+    # ---------------- PREVIEW ----------------
+    st.markdown("### Preview (Sample User)")
+
+    sample_user = selected_users[0]
+
+    preview_content = body.replace("{name}", sample_user["name"])
+
+    if use_html:
+        wrapped_preview = f"""
+        <div style="
+            background-color: white;
+            color: black;
+            padding: 25px;
+            border-radius: 8px;
+            font-family: Georgia, 'Times New Roman', serif;
+            min-height: 250px;
+        ">
+            {preview_content}
+        </div>
+        """
+        
+        st.components.v1.html(
+            wrapped_preview,
+            height=400,
+            scrolling=True
+        )
+
+    else:
+        st.code(preview_content)
+    # ---------------- CONFIRMATION ----------------
+    st.markdown("---")
+    confirm = st.checkbox("I confirm this broadcast is correct.")
+
+    if st.button("Send Broadcast"):
+        if not confirm:
+            st.error("Please confirm before sending.")
+            st.stop()
+
+        if not subject.strip():
+            st.error("Subject cannot be empty.")
+            st.stop()
+
+        success_count = 0
+
+        for user in selected_users:
+            try:
+                personalized_body = body.replace("{name}", user["name"])
+
+                send_email(
+                    email_receiver=user["email"],
+                    subject=subject,
+                    body=personalized_body,
+                    isHTML=use_html
+                )
+
+                success_count += 1
+            except Exception as e:
+                st.error(f"Failed for {user['email']}: {e}")
+
+        st.success(f"Broadcast sent successfully to {success_count} {'user' if success_count==1 else 'users'}.")
 # LOGOUT 
 elif menu == "Logout":
     st.session_state.clear()
