@@ -13,6 +13,8 @@ if (
     st.error("Unauthorized access. Please login as a user.")
     st.stop()
 
+if "edit_profile_mode" not in st.session_state:
+    st.session_state.edit_profile_mode = False
 
 st.set_page_config(page_title="User Dashboard", layout="wide")
 
@@ -21,12 +23,13 @@ st.title("User Dashboard")
 menu = st.sidebar.radio(
     "User Actions",
     [
+        'Profile',
         "Search Books",
         "Books Issued to Me",
         "Request a Book",
         "Issued Books History",
         "Get Book Details",
-        'Profile',
+        'Change Password',
         "Logout"
     ]
 )
@@ -173,7 +176,7 @@ elif menu == 'Profile':
 
         with col1:
             # Display a placeholder avatar based on gender
-            avatar_url = "https://www.w3schools.com/howto/img_avatar.png" if profile['gender'] == 'Cisgender Male' else "https://www.w3schools.com/howto/img_avatar2.png"
+            avatar_url = "https://www.w3schools.com/howto/img_avatar.png" if profile['gender'] == 'Cisgender Male' else "https://www.w3schools.com/howto/img_avatar2.png" if profile['gender'] =='Cisgender Female' else 'https://static.thenounproject.com/png/4216248-200.png'
             st.image(avatar_url, width=150)
             st.subheader(profile['username'])
             #st.caption(f"Member since: {date.today().year}") # Or fetch actual joining date
@@ -216,13 +219,206 @@ elif menu == 'Profile':
         # Action Buttons 
         st.markdown("<br>", unsafe_allow_html=True)
         edit_col, logout_col = st.columns([1, 5])
+        # EDIT PROFILE 
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        edit_col, logout_col = st.columns([1, 5])
+
         with edit_col:
             if st.button("Edit Profile"):
-                st.info("Edit functionality coming soon!")
+                st.session_state.edit_profile_mode = True
+
+        # EDIT FORM 
+        if st.session_state.edit_profile_mode:
+
+            st.markdown("### Edit Profile")
+
+            with st.form("edit_profile_form"):
+
+                new_name = st.text_input("Full Name", value=profile["name"])
+                new_email = st.text_input("Email", value=profile["email"])
+                new_phone = st.text_input("Phone", value=profile["phone"])
+                new_gender = st.selectbox(
+                    "Gender",
+                   ("Cisgender Male","Cisgender Female", 'Transgender Male', 'Transgender Female', 'Non-Binary', 'Genderfluid', 'Bigender', 'Agender','Intergender',"Prefer not to say","Custom")
+    ,
+                    index=["Cisgender Male", "Cisgender Female", 'Transgender Male', 'Transgender Female', 'Non-Binary', 'Genderfluid', 'Bigender', 'Agender','Intergender',"Prefer not to say","Custom"].index(profile["gender"])
+                    if profile["gender"] in ["Cisgender Male", "Cisgender Female", 'Transgender Male', 'Transgender Female', 'Non-Binary', 'Genderfluid', 'Bigender', 'Agender','Intergender',"Prefer not to say","Custom"]
+                    else 0
+                )
+                new_dob = st.date_input(
+                    "Date of Birth",
+                    value=profile["dob"] if profile["dob"] else None
+                )
+
+                save_btn = st.form_submit_button("Save Changes")
+                cancel_btn = st.form_submit_button("Cancel")
+
+            if cancel_btn:
+                st.session_state.edit_profile_mode = False
+                st.rerun()
+
+            if save_btn:
+
+                if not new_name.strip():
+                    st.error("Name cannot be empty.")
+
+                else:
+                    conn = get_connection()
+                    cur = conn.cursor(dictionary=True)
+                    cur.execute("SELECT email, phone FROM users WHERE username=%s", (username,))
+                    current_data = cur.fetchone()
+                    conn.close()
+
+                    email_changed = new_email.strip() != current_data["email"]
+                    phone_changed = new_phone.strip() != current_data["phone"]
+
+                    # -------- EMAIL VERIFICATION --------
+                    if email_changed:
+                        st.info("Email change requires verification.")
+                        if not accept_email(new_name, new_email):
+                            st.stop()
+
+                    # -------- PHONE VERIFICATION --------
+                    if phone_changed:
+                        st.info("Phone change requires verification.")
+                        if not accept_phone():
+                            st.stop()
+
+                    # -------- UPDATE DATABASE --------
+                    conn = get_connection()
+                    cur = conn.cursor()
+
+                    cur.execute("""
+                        UPDATE users
+                        SET name=%s, email=%s, phone=%s, gender=%s, dob=%s
+                        WHERE username=%s
+                    """, (
+                        new_name.strip(),
+                        new_email.strip(),
+                        new_phone.strip(),
+                        new_gender,
+                        new_dob,
+                        username
+                    ))
+
+                    conn.commit()
+                    conn.close()
+
+                    st.success("Profile updated successfully!")
+                    st.session_state.edit_profile_mode = False
+                    st.rerun()
+                
     else:
         st.error("User profile not found.")
     conn.close()
 
+elif menu == "Change Password":
+
+    st.subheader("Change Password")
+
+    # STEP 1 — Verify current password
+    old_pwd = st.text_input("Current Password", type="password")
+
+    if not old_pwd:
+        st.info("Enter your current password to proceed.")
+        st.stop()
+
+    role = authenticate(username, old_pwd)
+
+    if not role:
+        st.error("Incorrect current password.")
+        st.stop()
+
+    # STEP 2 — Security Question
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT security_q, security_ans, name, email FROM users WHERE username=%s",
+        (username,)
+    )
+    row = cur.fetchone()
+    conn.close()
+
+    q_reverse = {
+        1:"My favourite teacher",
+        2:"My best friend's name",
+        3:"My favourite food",
+        4:"My favourite artist",
+        5:"My nickname"
+    }
+
+    st.write("Security Question:", q_reverse[row["security_q"]])
+    ans = st.text_input("Answer")
+
+    if not ans:
+        st.stop()
+
+    if ans.strip().lower() != row["security_ans"].strip().lower():
+        st.error("Incorrect security answer.")
+        st.stop()
+
+    st.markdown("---")
+    st.markdown("### Set New Password")
+
+    new_pwd = st.text_input("New Password", type="password")
+    confirm_pwd = st.text_input("Confirm New Password", type="password")
+
+    def strong_password(p):
+        return (
+            len(p) >= 8 and
+            re.search(r"[A-Z]", p) and
+            re.search(r"[a-z]", p) and
+            re.search(r"\d", p) and
+            re.search(r"[!@#$%^&*(),.?\":{}|<>]", p)
+        )
+
+    if st.button("Change Password"):
+
+        if new_pwd != confirm_pwd:
+            st.error("Passwords do not match.")
+            st.stop()
+
+        error = validate_password_strength(new_pwd)
+        if error:
+            st.error(error)
+            st.stop()
+            
+        if new_pwd == old_pwd:
+            st.warning("New password cannot be same as old password.")
+            st.stop()
+
+        # UPDATE PASSWORD
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET password_hash=%s WHERE username=%s",
+            (hash_password(new_pwd), username)
+        )
+        conn.commit()
+        conn.close()
+
+        # Send safe email (NO password inside)
+        send_email(
+            row["email"],
+            "Library Account Password Changed Successfully",
+            f"""
+Dear {row["name"]},
+
+This is to inform you that your Library account password
+was changed successfully on {date2string(date.today())}.
+
+If you did NOT perform this action,
+please contact the Librarian immediately.
+
+Warm regards,
+Librarian
+Central Library
+"""
+        )
+
+        st.success("Password changed successfully. Confirmation email sent.")
+        st.rerun()
 # LOGOUT 
 elif menu == "Logout":
     st.session_state.clear()
