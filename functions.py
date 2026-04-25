@@ -6,7 +6,7 @@ import smtplib
 import re
 import streamlit as st
 from datetime import date
-import random, string, math
+import random as rand, string, math
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -181,8 +181,8 @@ Central Library
     return st.session_state.email_verified
 
 def accept_email(name: str, email=None):
-    if email is not None:
-        email = st.text_input("E-mail address", value=email).strip().lower()
+    if email is None:
+        email = st.text_input("E-mail address")#.strip().lower()
 
     # 1. Empty input → do nothing
     if not email:
